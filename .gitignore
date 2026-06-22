@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+.env
+
+data/train/
+data/test/
+data/sample_submission.csv
+data/*.zip
+data/submission*.csv
+model/*/
+!model/.gitkeep
+
+.pytest_cache/
+.mypy_cache/
