@@ -9,8 +9,7 @@ from tqdm import tqdm
 
 from dataset import get_test_well_ids, load_well, read_submission_template
 from features import (
-    ensure_feature_columns,
-    make_single_row_features,
+    InferenceFeatureBuilder,
     prepare_static_features,
     prepare_typewell_index,
 )
@@ -23,13 +22,15 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
     typewell_index = prepare_typewell_index(well.typewell)
     tvt_work = horizontal["TVT_input"].to_numpy(dtype=float).copy()
 
+    builder = InferenceFeatureBuilder(static_features, horizontal, typewell_index, feature_columns)
+
     records: list[dict[str, float | str]] = []
     for idx in range(len(horizontal)):
         if np.isfinite(tvt_work[idx]):
             continue
-        features = make_single_row_features(static_features, horizontal, typewell_index, tvt_work, idx)
-        features = ensure_feature_columns(features, feature_columns)
-        pred = float(model.predict(features)[0])
+        
+        features_array = builder.build_row(tvt_work, idx)
+        pred = float(model.predict(features_array)[0])
         tvt_work[idx] = pred
         row_index = int(horizontal.loc[idx, "row_index"])
         records.append({"id": f"{well.well_id}_{row_index}", "tvt": pred})

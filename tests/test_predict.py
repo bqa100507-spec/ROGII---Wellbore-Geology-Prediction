@@ -15,6 +15,8 @@ from predict import recursive_predict_well
 
 class PreviousPlusOneModel:
     def predict(self, frame):
+        if isinstance(frame, np.ndarray):
+            return frame[:, 0] + 1.0
         return frame["TVT_lag_1"].to_numpy(dtype=float) + 1.0
 
 

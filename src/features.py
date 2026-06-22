@@ -217,6 +217,82 @@ def make_single_row_features(
     return pd.DataFrame([row])
 
 
+class InferenceFeatureBuilder:
+    def __init__(self, static_features: pd.DataFrame, horizontal: pd.DataFrame, typewell_index: TypewellIndex, feature_columns: list[str]):
+        self.static_dict = {col: static_features[col].to_numpy() for col in static_features.columns}
+        self.history_arrays = {
+            "X": horizontal["X"].to_numpy(dtype=float) if "X" in horizontal.columns else np.full(len(horizontal), np.nan),
+            "Y": horizontal["Y"].to_numpy(dtype=float) if "Y" in horizontal.columns else np.full(len(horizontal), np.nan),
+            "Z": horizontal["Z"].to_numpy(dtype=float) if "Z" in horizontal.columns else np.full(len(horizontal), np.nan),
+            "GR": horizontal["GR"].to_numpy(dtype=float) if "GR" in horizontal.columns else np.full(len(horizontal), np.nan),
+        }
+        self.typewell_index = typewell_index
+        self.feature_columns = feature_columns
+        self.tw_tvt = typewell_index.tvt
+        self.tw_gr = typewell_index.gr
+        
+    def build_row(self, tvt_work: np.ndarray, idx: int) -> np.ndarray:
+        row = {}
+        for col, arr in self.static_dict.items():
+            row[col] = arr[idx]
+            
+        self.history_arrays["TVT"] = tvt_work
+        
+        for col in ["TVT", "X", "Y", "Z", "GR"]:
+            values = self.history_arrays[col]
+            for lag in LAG_STEPS:
+                row[f"{col}_lag_{lag}"] = values[idx - lag] if idx - lag >= 0 else np.nan
+            for window in ROLLING_WINDOWS:
+                mean, std = _rolling_stats(values, idx, window)
+                row[f"{col}_roll_mean_{window}"] = mean
+                row[f"{col}_roll_std_{window}"] = std
+                
+        expected = tvt_work[idx - 1] if idx > 0 else np.nan
+        current_gr = row.get("GR", np.nan)
+        
+        if np.isfinite(expected) and len(self.tw_tvt) > 0:
+            pos = np.searchsorted(self.tw_tvt, expected, side="left")
+            right = np.clip(pos, 0, len(self.tw_tvt) - 1)
+            left = np.clip(pos - 1, 0, len(self.tw_tvt) - 1)
+            if abs(expected - self.tw_tvt[left]) <= abs(expected - self.tw_tvt[right]):
+                nearest = left
+            else:
+                nearest = right
+            
+            nearest_gr = self.tw_gr[nearest]
+            row["expected_tvt"] = expected
+            row["typewell_gr_at_nearest_tvt"] = nearest_gr
+            row["gr_minus_typewell_gr"] = current_gr - nearest_gr
+            row["nearest_typewell_tvt_gap"] = expected - self.tw_tvt[nearest]
+            
+            for window in TYPEWELL_WINDOWS:
+                half = window // 2
+                start = max(0, nearest - half)
+                end = min(len(self.tw_gr), nearest + half + 1)
+                values = self.tw_gr[start:end]
+                if np.isfinite(values).any():
+                    row[f"typewell_gr_roll_mean_{window}"] = float(np.nanmean(values))
+                    finite_count = int(np.isfinite(values).sum())
+                    row[f"typewell_gr_roll_std_{window}"] = float(np.nanstd(values, ddof=1)) if finite_count > 1 else np.nan
+                else:
+                    row[f"typewell_gr_roll_mean_{window}"] = np.nan
+                    row[f"typewell_gr_roll_std_{window}"] = np.nan
+        else:
+            row["expected_tvt"] = expected
+            row["typewell_gr_at_nearest_tvt"] = np.nan
+            row["gr_minus_typewell_gr"] = np.nan
+            row["nearest_typewell_tvt_gap"] = np.nan
+            for window in TYPEWELL_WINDOWS:
+                row[f"typewell_gr_roll_mean_{window}"] = np.nan
+                row[f"typewell_gr_roll_std_{window}"] = np.nan
+                
+        out = np.zeros((1, len(self.feature_columns)), dtype=float)
+        for i, col in enumerate(self.feature_columns):
+            out[0, i] = row.get(col, np.nan)
+        return out
+
+
+
 def ensure_feature_columns(frame: pd.DataFrame, feature_columns: Iterable[str]) -> pd.DataFrame:
     columns = list(feature_columns)
     aligned = frame.copy()
