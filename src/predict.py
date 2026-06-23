@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import sys
+import warnings
 from pathlib import Path
+
+# Add src to sys.path to prevent shadowing from global packages
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import json
 import numpy as np
 import pandas as pd
-from tqdm import tqdm
+from tqdm.auto import tqdm
 
 from dataset import load_well
 from features import (
@@ -31,7 +36,7 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
             continue
         
         features_array = builder.build_row(tvt_work, idx)
-        pred = float(model.predict(features_array)[0])
+        pred = float(model.booster_.predict(features_array)[0])
         tvt_work[idx] = pred
         row_index = int(horizontal.loc[idx, "row_index"])
         records.append({"id": f"{well.well_id}_{row_index}", "tvt": pred})
@@ -103,6 +108,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def main() -> None:
+    warnings.filterwarnings("ignore")
     args = parse_args()
     submission = predict_validation(args.data_dir, args.model_dir, args.output)
     print(f"Saved validation predictions to {args.output}")

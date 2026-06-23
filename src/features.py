@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Iterable
 
 import numpy as np
@@ -171,15 +172,33 @@ def build_training_matrix(
     return features.loc[mask].reset_index(drop=True), horizontal.loc[mask, "TVT"].reset_index(drop=True)
 
 
+def _array_stats(values: np.ndarray) -> tuple[float, float]:
+    total = 0.0
+    count = 0
+    for val in values:
+        if math.isfinite(val):
+            total += val
+            count += 1
+            
+    if count == 0:
+        return np.nan, np.nan
+        
+    mean = total / count
+    if count == 1:
+        return mean, np.nan
+        
+    sq_diff = 0.0
+    for val in values:
+        if math.isfinite(val):
+            sq_diff += (val - mean) ** 2
+            
+    std = math.sqrt(sq_diff / (count - 1))
+    return mean, std
+
 def _rolling_stats(values: np.ndarray, idx: int, window: int) -> tuple[float, float]:
     start = max(0, idx - window)
     hist = values[start:idx]
-    if len(hist) == 0 or not np.isfinite(hist).any():
-        return np.nan, np.nan
-    mean = float(np.nanmean(hist))
-    finite_count = int(np.isfinite(hist).sum())
-    std = float(np.nanstd(hist, ddof=1)) if finite_count > 1 else np.nan
-    return mean, std
+    return _array_stats(hist)
 
 
 def make_single_row_features(
@@ -270,13 +289,9 @@ class InferenceFeatureBuilder:
                 start = max(0, nearest - half)
                 end = min(len(self.tw_gr), nearest + half + 1)
                 values = self.tw_gr[start:end]
-                if np.isfinite(values).any():
-                    row[f"typewell_gr_roll_mean_{window}"] = float(np.nanmean(values))
-                    finite_count = int(np.isfinite(values).sum())
-                    row[f"typewell_gr_roll_std_{window}"] = float(np.nanstd(values, ddof=1)) if finite_count > 1 else np.nan
-                else:
-                    row[f"typewell_gr_roll_mean_{window}"] = np.nan
-                    row[f"typewell_gr_roll_std_{window}"] = np.nan
+                mean, std = _array_stats(values)
+                row[f"typewell_gr_roll_mean_{window}"] = mean
+                row[f"typewell_gr_roll_std_{window}"] = std
         else:
             row["expected_tvt"] = expected
             row["typewell_gr_at_nearest_tvt"] = np.nan
