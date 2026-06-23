@@ -68,7 +68,7 @@ def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str 
         well = load_well(data_dir, "train", well_id)
         
         true_tvt = well.horizontal[["row_index", "TVT"]].copy()
-        well.horizontal = well.horizontal.drop(columns=["TVT"])
+        well.horizontal.drop(columns=["TVT"], inplace=True)
         
         if well.horizontal["TVT_input"].isna().any():
             first_nan_idx = well.horizontal["TVT_input"].isna().idxmax()
