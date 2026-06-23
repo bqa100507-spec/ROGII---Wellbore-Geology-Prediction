@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from dataset import get_test_well_ids, load_well, read_submission_template
+from dataset import load_well
 from features import (
     InferenceFeatureBuilder,
     prepare_static_features,
@@ -39,39 +39,17 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
     return pd.DataFrame(records), tvt_work
 
 
-def predict_submission(data_dir: str | Path, model_dir: str | Path, output: str | Path) -> pd.DataFrame:
-    model, feature_columns, _ = load_artifacts(model_dir)
-    template = read_submission_template(data_dir)
-    test_ids = get_test_well_ids(data_dir)
-
-    predictions = []
-    for well_id in tqdm(test_ids, desc="Predicting test wells"):
-        well = load_well(data_dir, "test", well_id)
-        pred_df, _ = recursive_predict_well(model, feature_columns, well)
-        predictions.append(pred_df)
-
-    pred = pd.concat(predictions, ignore_index=True) if predictions else pd.DataFrame(columns=["id", "tvt"])
-    merged = template[["id"]].merge(pred, on="id", how="left", validate="one_to_one")
-    if merged["tvt"].isna().any():
-        missing = merged.loc[merged["tvt"].isna(), "id"].head(10).tolist()
-        raise ValueError(f"Missing predictions for submission ids: {missing}")
-
-    output = Path(output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_csv(output, index=False)
-    return merged
-
 
 def rmse(y_true: pd.Series, y_pred: pd.Series) -> float:
     return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
 
-def predict_sandbox(data_dir: str | Path, model_dir: str | Path, output: str | Path) -> pd.DataFrame:
+def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str | Path) -> pd.DataFrame:
     model, feature_columns, _ = load_artifacts(model_dir)
     
     metrics_path = Path(model_dir) / "metrics.json"
     if not metrics_path.exists():
-        raise FileNotFoundError(f"Missing {metrics_path} for sandbox mode")
+        raise FileNotFoundError(f"Missing {metrics_path} for validation mode")
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     
     if metrics.get("split") == "holdout":
@@ -86,7 +64,7 @@ def predict_sandbox(data_dir: str | Path, model_dir: str | Path, output: str | P
         raise ValueError("No validation wells found in metrics.json")
 
     predictions = []
-    for well_id in tqdm(valid_ids, desc="Predicting sandbox wells"):
+    for well_id in tqdm(valid_ids, desc="Predicting validation wells"):
         well = load_well(data_dir, "train", well_id)
         
         true_tvt = well.horizontal[["row_index", "TVT"]].copy()
@@ -120,20 +98,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Recursive inference for ROGII TVT prediction.")
     parser.add_argument("--data_dir", type=str, default="data")
     parser.add_argument("--model_dir", type=str, required=True)
-    parser.add_argument("--output", type=str, default="data/submission.csv")
-    parser.add_argument("--sandbox", action="store_true", help="Run validation on local Kaggle Sandbox")
+    parser.add_argument("--output", type=str, default="data/validation_predictions.csv")
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-    if args.sandbox:
-        output_path = args.output if args.output != "data/submission.csv" else "data/sandbox_predictions.csv"
-        submission = predict_sandbox(args.data_dir, args.model_dir, output_path)
-        print(f"Saved sandbox predictions to {output_path}")
-    else:
-        submission = predict_submission(args.data_dir, args.model_dir, args.output)
-        print(f"Saved submission to {args.output}")
+    submission = predict_validation(args.data_dir, args.model_dir, args.output)
+    print(f"Saved validation predictions to {args.output}")
     print(f"Rows: {len(submission)}, NaN tvt: {int(submission['tvt'].isna().sum())}")
 
 
