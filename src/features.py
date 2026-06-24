@@ -10,8 +10,8 @@ import pandas as pd
 
 BASE_INPUT_COLUMNS = ["MD", "X", "Y", "Z", "GR"]
 HISTORY_COLUMNS = ["TVT", "X", "Y", "Z", "GR"]
-LAG_STEPS = [1, 2, 3, 5, 10, 20]
-ROLLING_WINDOWS = [5, 10, 20]
+LAG_STEPS = [1, 2, 3, 5, 10, 20, 50, 100]
+ROLLING_WINDOWS = [5, 10, 20, 50, 100]
 TYPEWELL_WINDOWS = [5, 10, 20]
 
 
@@ -121,10 +121,15 @@ def build_feature_frame(
     horizontal: pd.DataFrame,
     typewell: pd.DataFrame,
     tvt_history: pd.Series | np.ndarray,
+    is_training: bool = False,
 ) -> pd.DataFrame:
     static = prepare_static_features(horizontal)
     history = pd.DataFrame(index=horizontal.index)
-    history["TVT"] = pd.Series(tvt_history, index=horizontal.index, dtype=float)
+    tvt_series = pd.Series(tvt_history, index=horizontal.index, dtype=float)
+    history["TVT"] = tvt_series.copy()
+    if is_training:
+        history["TVT"] += np.random.normal(0, 1.0, size=len(history["TVT"]))
+        
     for col in ["X", "Y", "Z", "GR"]:
         history[col] = _safe_numeric(horizontal[col]) if col in horizontal.columns else np.nan
 
@@ -138,7 +143,7 @@ def build_feature_frame(
             parts.append(shifted.rolling(window, min_periods=2).std().rename(f"{col}_roll_std_{window}"))
 
     typewell_index = prepare_typewell_index(typewell)
-    expected_tvt = history["TVT"].shift(1)
+    expected_tvt = tvt_series.shift(1)
     parts.append(make_typewell_features(static["GR"], expected_tvt, typewell_index))
     return pd.concat(parts, axis=1)
 
@@ -167,7 +172,7 @@ def build_training_matrix(
 ) -> tuple[pd.DataFrame, pd.Series]:
     if "TVT" not in horizontal.columns:
         raise ValueError("Training horizontal data must contain TVT")
-    features = build_feature_frame(horizontal, typewell, horizontal["TVT"])
+    features = build_feature_frame(horizontal, typewell, horizontal["TVT"], is_training=True)
     mask = target_mask(horizontal, scope=scope)
     return features.loc[mask].reset_index(drop=True), horizontal.loc[mask, "TVT"].reset_index(drop=True)
 
