@@ -27,6 +27,7 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
     static_features = prepare_static_features(horizontal)
     typewell_index = prepare_typewell_index(well.typewell)
     tvt_work = horizontal["TVT_input"].to_numpy(dtype=float).copy()
+    row_indices = horizontal["row_index"].to_numpy(dtype=int)
 
     builder = InferenceFeatureBuilder(static_features, horizontal, typewell_index, feature_columns)
 
@@ -38,8 +39,7 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
         features_array = builder.build_row(tvt_work, idx)
         pred = float(model.booster_.predict(features_array)[0])
         tvt_work[idx] = pred
-        row_index = int(horizontal.loc[idx, "row_index"])
-        records.append({"id": f"{well.well_id}_{row_index}", "tvt": pred})
+        records.append({"id": f"{well.well_id}_{row_indices[idx]}", "tvt": pred})
 
     return pd.DataFrame(records), tvt_work
 
