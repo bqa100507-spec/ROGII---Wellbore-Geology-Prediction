@@ -50,6 +50,10 @@ def prepare_static_features(horizontal: pd.DataFrame) -> pd.DataFrame:
     out["step_distance"] = np.sqrt(out["dX"] ** 2 + out["dY"] ** 2 + out["dZ"] ** 2)
     out["path_distance"] = out["step_distance"].fillna(0).cumsum()
     out["dZ_dMD"] = out["dZ"] / out["dMD"].replace(0, np.nan)
+    
+    out["GR_diff"] = out["GR"].diff().fillna(0)
+    out["GR_rolling_std"] = out["GR"].rolling(10, min_periods=2).std().fillna(0)
+    
     return out
 
 
