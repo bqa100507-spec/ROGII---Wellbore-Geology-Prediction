@@ -32,14 +32,20 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
     builder = InferenceFeatureBuilder(static_features, horizontal, typewell_index, feature_columns)
 
     records: list[dict[str, float | str]] = []
+    allowed_actions = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
+    
     for idx in range(len(horizontal)):
         if np.isfinite(tvt_work[idx]):
             continue
         
         features_array = builder.build_row(tvt_work, idx)
-        pred = float(model.booster_.predict(features_array)[0])
-        tvt_work[idx] = pred
-        records.append({"id": f"{well.well_id}_{row_indices[idx]}", "tvt": pred})
+        probs = model.booster_.predict(features_array)
+        class_idx = int(np.argmax(probs[0]))
+        pred_action = float(allowed_actions[class_idx])
+        
+        new_tvt = tvt_work[idx - 1] + pred_action
+        tvt_work[idx] = new_tvt
+        records.append({"id": f"{well.well_id}_{row_indices[idx]}", "tvt": new_tvt})
 
     return pd.DataFrame(records), tvt_work
 

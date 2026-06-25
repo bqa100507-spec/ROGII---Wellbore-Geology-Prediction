@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 from dataset import get_test_well_ids, list_well_ids, load_well
 from features import build_training_matrix, ensure_feature_columns
-from model import get_lightgbm_regressor, save_artifacts
+from model import get_lightgbm_classifier, save_artifacts
 from predict import recursive_predict_well
 
 
@@ -106,7 +106,7 @@ def fit_lgbm(
     y_valid: pd.Series | None,
     args: argparse.Namespace,
 ):
-    model = get_lightgbm_regressor(
+    model = get_lightgbm_classifier(
         random_state=args.random_state,
         n_estimators=args.n_estimators,
         learning_rate=args.learning_rate,
@@ -118,7 +118,7 @@ def fit_lgbm(
             from lightgbm import early_stopping, log_evaluation
 
             fit_kwargs["eval_set"] = [(x_valid, y_valid)]
-            fit_kwargs["eval_metric"] = "rmse"
+            fit_kwargs["eval_metric"] = "multi_logloss"
             fit_kwargs["callbacks"] = [
                 early_stopping(args.early_stopping_rounds, verbose=False),
                 log_evaluation(args.log_period),
@@ -157,13 +157,17 @@ def run_holdout(args: argparse.Namespace, all_ids: list[str]) -> tuple[Any, list
     model = fit_lgbm(x_train, y_train, x_valid, y_valid, args)
 
     valid_pred = model.predict(x_valid)
+    allowed_actions = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
+    valid_pred_actions = allowed_actions[valid_pred.astype(int)]
+    y_valid_actions = allowed_actions[y_valid.to_numpy(dtype=int)]
+    
     metrics = {
         "split": "holdout",
         "train_wells": train_ids,
         "valid_wells": valid_ids,
         "train_rows": int(len(x_train)),
         "valid_rows": int(len(x_valid)),
-        "teacher_forced_rmse": rmse(y_valid, valid_pred),
+        "teacher_forced_rmse": rmse(y_valid_actions, valid_pred_actions),
         "recursive_validation": recursive_validate(
             model,
             feature_columns,
@@ -193,13 +197,19 @@ def run_groupkfold(args: argparse.Namespace, all_ids: list[str]) -> tuple[Any, l
         x_valid, y_valid = x_all.iloc[valid_idx], y_all.iloc[valid_idx]
         model = fit_lgbm(x_train, y_train, x_valid, y_valid, args)
         pred = model.predict(x_valid)
+        
+        allowed_actions = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
+        pred_actions = allowed_actions[pred.astype(int)]
+        y_valid_actions = allowed_actions[y_valid.to_numpy(dtype=int)]
+        
         valid_wells = sorted(set(groups[valid_idx]))
         fold_metrics.append(
             {
                 "fold": fold,
                 "valid_wells": valid_wells,
+                "train_rows": len(train_idx),
                 "valid_rows": int(len(valid_idx)),
-                "teacher_forced_rmse": rmse(y_valid, pred),
+                "teacher_forced_rmse": rmse(y_valid_actions, pred_actions),
             }
         )
 
