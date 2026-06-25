@@ -39,9 +39,8 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
             continue
         
         features_array = builder.build_row(tvt_work, idx)
-        probs = model.booster_.predict(features_array)
-        class_idx = int(np.argmax(probs[0]))
-        pred_action = float(allowed_actions[class_idx])
+        probs = model.booster_.predict(features_array)[0]
+        pred_action = float(np.dot(probs, allowed_actions))
         
         new_tvt = tvt_work[idx - 1] + pred_action
         tvt_work[idx] = new_tvt
