@@ -23,6 +23,7 @@ def get_lightgbm_classifier(random_state: int = 42, **overrides: Any):
         "objective": "multiclass",
         "metric": "multi_logloss",
         "num_class": 5,
+        "class_weight": "balanced",
         "n_estimators": 2000,
         "learning_rate": 0.03,
         "num_leaves": 63,

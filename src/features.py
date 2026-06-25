@@ -175,15 +175,8 @@ def build_training_matrix(
     features = build_feature_frame(horizontal, typewell, horizontal["TVT"], is_training=True)
     
     delta_tvt = horizontal["TVT"].diff()
-    allowed_actions = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
-    
-    delta_np = delta_tvt.to_numpy(dtype=float)[:, np.newaxis]
-    actions_np = allowed_actions[np.newaxis, :]
-    
-    with np.errstate(invalid='ignore'):
-        diffs = np.abs(delta_np - actions_np)
-        # argmin on NaNs returns 0, but we will filter out NaNs later
-        action_idx = np.argmin(diffs, axis=1)
+    bins = [-np.inf, -0.6, -0.1, 0.1, 0.6, np.inf]
+    action_idx = pd.cut(delta_tvt, bins=bins, labels=False)
         
     y_action = pd.Series(action_idx, index=horizontal.index)
     
