@@ -29,20 +29,21 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
     tvt_work = horizontal["TVT_input"].to_numpy(dtype=float).copy()
     row_indices = horizontal["row_index"].to_numpy(dtype=int)
 
-    builder = InferenceFeatureBuilder(static_features, horizontal, typewell_index, feature_columns)
+    start_tvt_idx = horizontal["TVT_input"].last_valid_index()
+    start_tvt = float(horizontal.loc[start_tvt_idx, "TVT_input"]) if start_tvt_idx is not None else 0.0
+
+    builder = InferenceFeatureBuilder(static_features, horizontal, typewell_index, feature_columns, start_tvt)
 
     records: list[dict[str, float | str]] = []
-    allowed_actions = np.array([-1.0, -0.5, 0.0, 0.5, 1.0])
-    
     for idx in range(len(horizontal)):
         if np.isfinite(tvt_work[idx]):
             continue
         
         features_array = builder.build_row(tvt_work, idx)
-        probs = model.booster_.predict(features_array)[0]
-        pred_action = float(np.dot(probs, allowed_actions))
+        predicted_delta = float(model.booster_.predict(features_array)[0])
+        clipped_delta = float(np.clip(predicted_delta, -1.0, 1.0))
         
-        new_tvt = tvt_work[idx - 1] + pred_action
+        new_tvt = tvt_work[idx - 1] + clipped_delta
         tvt_work[idx] = new_tvt
         records.append({"id": f"{well.well_id}_{row_indices[idx]}", "tvt": new_tvt})
 

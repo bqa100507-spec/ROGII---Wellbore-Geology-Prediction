@@ -145,6 +145,11 @@ def build_feature_frame(
     typewell_index = prepare_typewell_index(typewell)
     expected_tvt = tvt_series.shift(1)
     parts.append(make_typewell_features(static["GR"], expected_tvt, typewell_index))
+    
+    start_tvt = tvt_series.iloc[0]
+    current_drift = expected_tvt - start_tvt
+    parts.append(current_drift.rename("Current_Drift"))
+    
     return pd.concat(parts, axis=1)
 
 
@@ -174,16 +179,12 @@ def build_training_matrix(
         raise ValueError("Training horizontal data must contain TVT")
     features = build_feature_frame(horizontal, typewell, horizontal["TVT"], is_training=True)
     
-    delta_tvt = horizontal["TVT"].diff()
-    bins = [-np.inf, -0.6, -0.1, 0.1, 0.6, np.inf]
-    action_idx = pd.cut(delta_tvt, bins=bins, labels=False)
-        
-    y_action = pd.Series(action_idx, index=horizontal.index)
+    delta_tvt = horizontal["TVT"].diff().fillna(0)
     
     mask = target_mask(horizontal, scope=scope)
     mask &= delta_tvt.notna()
     
-    return features.loc[mask].reset_index(drop=True), y_action.loc[mask].reset_index(drop=True)
+    return features.loc[mask].reset_index(drop=True), delta_tvt.loc[mask].reset_index(drop=True)
 
 
 def _array_stats(values: np.ndarray) -> tuple[float, float]:
@@ -221,6 +222,7 @@ def make_single_row_features(
     typewell_index: TypewellIndex,
     tvt_work: np.ndarray,
     idx: int,
+    start_tvt: float,
 ) -> pd.DataFrame:
     row = static_features.iloc[idx].to_dict()
     history_arrays = {
@@ -240,6 +242,8 @@ def make_single_row_features(
             row[f"{col}_roll_std_{window}"] = std
 
     expected = tvt_work[idx - 1] if idx > 0 else np.nan
+    row["Current_Drift"] = expected - start_tvt
+    
     current_gr = row.get("GR", np.nan)
     tw_features = make_typewell_features(
         pd.Series([current_gr]),
@@ -251,7 +255,7 @@ def make_single_row_features(
 
 
 class InferenceFeatureBuilder:
-    def __init__(self, static_features: pd.DataFrame, horizontal: pd.DataFrame, typewell_index: TypewellIndex, feature_columns: list[str]):
+    def __init__(self, static_features: pd.DataFrame, horizontal: pd.DataFrame, typewell_index: TypewellIndex, feature_columns: list[str], start_tvt: float):
         self.static_dict = {col: static_features[col].to_numpy() for col in static_features.columns}
         self.history_arrays = {
             "X": horizontal["X"].to_numpy(dtype=float) if "X" in horizontal.columns else np.full(len(horizontal), np.nan),
@@ -263,6 +267,7 @@ class InferenceFeatureBuilder:
         self.feature_columns = feature_columns
         self.tw_tvt = typewell_index.tvt
         self.tw_gr = typewell_index.gr
+        self.start_tvt = start_tvt
         
     def build_row(self, tvt_work: np.ndarray, idx: int) -> np.ndarray:
         row = {}
@@ -281,6 +286,8 @@ class InferenceFeatureBuilder:
                 row[f"{col}_roll_std_{window}"] = std
                 
         expected = tvt_work[idx - 1] if idx > 0 else np.nan
+        row["Current_Drift"] = expected - self.start_tvt
+        
         current_gr = row.get("GR", np.nan)
         
         if np.isfinite(expected) and len(self.tw_tvt) > 0:

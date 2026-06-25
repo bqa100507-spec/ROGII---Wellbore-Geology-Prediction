@@ -13,17 +13,15 @@ CONFIG_FILENAME = "config.json"
 METRICS_FILENAME = "metrics.json"
 
 
-def get_lightgbm_classifier(random_state: int = 42, **overrides: Any):
+def get_lightgbm_regressor(random_state: int = 42, **overrides: Any):
     try:
-        from lightgbm import LGBMClassifier
+        from lightgbm import LGBMRegressor
     except ImportError as exc:
         raise ImportError("LightGBM is required. Install it with: pip install lightgbm") from exc
 
     params = {
-        "objective": "multiclass",
-        "metric": "multi_logloss",
-        "num_class": 5,
-        "class_weight": "balanced",
+        "objective": "huber",
+        "metric": "rmse",
         "n_estimators": 2000,
         "learning_rate": 0.03,
         "num_leaves": 63,
@@ -39,7 +37,7 @@ def get_lightgbm_classifier(random_state: int = 42, **overrides: Any):
         "verbosity": -1,
     }
     params.update({key: value for key, value in overrides.items() if value is not None})
-    return LGBMClassifier(**params)
+    return LGBMRegressor(**params)
 
 
 def save_artifacts(
