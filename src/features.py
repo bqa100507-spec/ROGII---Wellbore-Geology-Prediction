@@ -52,7 +52,17 @@ def prepare_static_features(horizontal: pd.DataFrame) -> pd.DataFrame:
     out["dZ_dMD"] = out["dZ"] / out["dMD"].replace(0, np.nan)
     
     out["GR_diff"] = out["GR"].diff().fillna(0)
-    out["GR_rolling_std"] = out["GR"].rolling(10, min_periods=2).std().fillna(0)
+    
+    out["GR_static_mean_10"] = out["GR"].rolling(10, min_periods=1).mean().fillna(0)
+    out["GR_static_std_10"] = out["GR"].rolling(10, min_periods=2).std().fillna(0)
+    out["GR_static_mean_50"] = out["GR"].rolling(50, min_periods=1).mean().fillna(0)
+    out["GR_static_std_50"] = out["GR"].rolling(50, min_periods=2).std().fillna(0)
+    
+    out["GR_lookahead_10"] = out["GR"].shift(-10).fillna(0)
+    out["GR_lookahead_30"] = out["GR"].shift(-30).fillna(0)
+    
+    out["GR_lookback_10"] = out["GR"].shift(10).fillna(0)
+    out["GR_lookback_30"] = out["GR"].shift(30).fillna(0)
     
     return out
 
