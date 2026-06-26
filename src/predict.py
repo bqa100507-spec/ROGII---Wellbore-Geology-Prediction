@@ -21,8 +21,31 @@ from features import (
 )
 from model import load_artifacts
 
+def get_start_coords(horizontal: pd.DataFrame) -> tuple[float, float]:
+    valid_xy = horizontal.dropna(subset=["X", "Y"])
+    if len(valid_xy) == 0:
+        return np.nan, np.nan
+    return float(valid_xy.iloc[0]["X"]), float(valid_xy.iloc[0]["Y"])
 
-def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.DataFrame, np.ndarray]:
+def find_offset_wells(test_well, train_wells, k=3):
+    test_x, test_y = get_start_coords(test_well.horizontal)
+    if np.isnan(test_x) or np.isnan(test_y):
+        return []
+
+    distances = []
+    for tw in train_wells:
+        if tw.well_id == test_well.well_id:
+            continue
+        tw_x, tw_y = get_start_coords(tw.horizontal)
+        if np.isnan(tw_x) or np.isnan(tw_y):
+            continue
+        dist = np.sqrt((tw_x - test_x)**2 + (tw_y - test_y)**2)
+        distances.append((dist, tw))
+        
+    distances.sort(key=lambda x: x[0])
+    return [tw for _, tw in distances[:k]]
+
+def recursive_predict_well(model, feature_columns: list[str], well, train_wells=None) -> tuple[pd.DataFrame, np.ndarray]:
     horizontal = well.horizontal.reset_index(drop=True)
     static_features = prepare_static_features(horizontal)
     typewell_index = prepare_typewell_index(well.typewell)
@@ -34,14 +57,50 @@ def recursive_predict_well(model, feature_columns: list[str], well) -> tuple[pd.
 
     builder = InferenceFeatureBuilder(static_features, horizontal, typewell_index, feature_columns, start_tvt)
 
+    offset_wells = []
+    if train_wells is not None:
+        offset_wells = find_offset_wells(well, train_wells, k=3)
+
+    test_md = horizontal["MD"].to_numpy(dtype=float)
+    regional_dip_array = np.full(len(horizontal), np.nan)
+
+    if offset_wells:
+        interpolated_dips = []
+        for ow in offset_wells:
+            ow_horz = ow.horizontal
+            if "MD" in ow_horz.columns and "TVT" in ow_horz.columns:
+                delta_tvt = ow_horz["TVT"].diff().fillna(0).to_numpy(dtype=float)
+                ow_md = ow_horz["MD"].to_numpy(dtype=float)
+                valid_mask = np.isfinite(ow_md) & np.isfinite(delta_tvt)
+                if valid_mask.sum() > 1:
+                    ow_md_valid = ow_md[valid_mask]
+                    delta_tvt_valid = delta_tvt[valid_mask]
+                    sort_idx = np.argsort(ow_md_valid)
+                    ow_md_valid = ow_md_valid[sort_idx]
+                    delta_tvt_valid = delta_tvt_valid[sort_idx]
+                    
+                    interp_dip = np.interp(test_md, ow_md_valid, delta_tvt_valid, left=np.nan, right=np.nan)
+                    interpolated_dips.append(interp_dip)
+                    
+        if interpolated_dips:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", category=RuntimeWarning)
+                regional_dip_array = np.nanmean(np.vstack(interpolated_dips), axis=0)
+
     records: list[dict[str, float | str]] = []
     for idx in range(len(horizontal)):
         if np.isfinite(tvt_work[idx]):
             continue
         
+        regional_dip = regional_dip_array[idx]
+        
         features_array = builder.build_row(tvt_work, idx)
         predicted_delta = float(model.booster_.predict(features_array)[0])
-        clipped_delta = float(np.clip(predicted_delta, -1.0, 1.0))
+        
+        if np.isfinite(regional_dip):
+            clipped_delta = float(np.clip(predicted_delta, regional_dip - 0.15, regional_dip + 0.15))
+        else:
+            clipped_delta = float(np.clip(predicted_delta, -0.3, 0.3))
         
         new_tvt = tvt_work[idx - 1] + clipped_delta
         tvt_work[idx] = new_tvt
@@ -64,8 +123,10 @@ def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str 
     metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
     
     if metrics.get("split") == "holdout":
+        all_train_ids = metrics.get("train_wells", [])
         valid_ids = metrics.get("valid_wells", [])
     else:
+        all_train_ids = metrics.get("wells", [])
         valid_ids = []
         for fold in metrics.get("folds", []):
             valid_ids.extend(fold.get("valid_wells", []))
@@ -73,6 +134,11 @@ def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str 
         
     if not valid_ids:
         raise ValueError("No validation wells found in metrics.json")
+
+    print("Loading all train wells for offset matching...")
+    # Import load_wells here to avoid circular imports if dataset relies on predict
+    from dataset import load_wells
+    train_wells = load_wells(data_dir, "train", all_train_ids)
 
     predictions = []
     for well_id in tqdm(valid_ids, desc="Predicting validation wells"):
@@ -85,7 +151,7 @@ def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str 
             first_nan_idx = well.horizontal["TVT_input"].isna().idxmax()
             well.horizontal.loc[first_nan_idx:, "TVT_input"] = np.nan
             
-        pred_df, _ = recursive_predict_well(model, feature_columns, well)
+        pred_df, _ = recursive_predict_well(model, feature_columns, well, train_wells)
         
         truth = true_tvt.copy()
         truth["id"] = truth["row_index"].map(lambda idx: f"{well_id}_{int(idx)}")
