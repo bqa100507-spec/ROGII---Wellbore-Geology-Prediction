@@ -12,6 +12,7 @@ import json
 import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
+from joblib import Parallel, delayed
 
 from dataset import load_well
 from features import (
@@ -114,6 +115,25 @@ def rmse(y_true: pd.Series, y_pred: pd.Series) -> float:
     return float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
 
 
+def predict_single_well(well_id: str, data_dir: str | Path, model, feature_columns: list[str], train_wells: list) -> pd.DataFrame | None:
+    well = load_well(data_dir, "train", well_id)
+    
+    true_tvt = well.horizontal[["row_index", "TVT"]].copy()
+    well.horizontal.drop(columns=["TVT"], inplace=True)
+    
+    if well.horizontal["TVT_input"].isna().any():
+        first_nan_idx = well.horizontal["TVT_input"].isna().idxmax()
+        well.horizontal.loc[first_nan_idx:, "TVT_input"] = np.nan
+        
+    pred_df, _ = recursive_predict_well(model, feature_columns, well, train_wells)
+    
+    truth = true_tvt.copy()
+    truth["id"] = truth["row_index"].map(lambda idx: f"{well_id}_{int(idx)}")
+    merged = pred_df.merge(truth[["id", "TVT"]], on="id", how="left")
+    merged["well_id"] = well_id
+    return merged
+
+
 def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str | Path) -> pd.DataFrame:
     model, feature_columns, _ = load_artifacts(model_dir)
     
@@ -140,24 +160,13 @@ def predict_validation(data_dir: str | Path, model_dir: str | Path, output: str 
     from dataset import load_wells
     train_wells = load_wells(data_dir, "train", all_train_ids)
 
-    predictions = []
-    for well_id in tqdm(valid_ids, desc="Predicting validation wells"):
-        well = load_well(data_dir, "train", well_id)
-        
-        true_tvt = well.horizontal[["row_index", "TVT"]].copy()
-        well.horizontal.drop(columns=["TVT"], inplace=True)
-        
-        if well.horizontal["TVT_input"].isna().any():
-            first_nan_idx = well.horizontal["TVT_input"].isna().idxmax()
-            well.horizontal.loc[first_nan_idx:, "TVT_input"] = np.nan
-            
-        pred_df, _ = recursive_predict_well(model, feature_columns, well, train_wells)
-        
-        truth = true_tvt.copy()
-        truth["id"] = truth["row_index"].map(lambda idx: f"{well_id}_{int(idx)}")
-        merged = pred_df.merge(truth[["id", "TVT"]], on="id", how="left")
-        merged["well_id"] = well_id
-        predictions.append(merged)
+    predictions = Parallel(n_jobs=-2)(
+        delayed(predict_single_well)(well_id, data_dir, model, feature_columns, train_wells)
+        for well_id in tqdm(valid_ids, desc="Predicting validation wells")
+    )
+    
+    # Filter out None if any
+    predictions = [p for p in predictions if p is not None]
 
     pred = pd.concat(predictions, ignore_index=True) if predictions else pd.DataFrame(columns=["id", "tvt", "TVT", "well_id"])
     

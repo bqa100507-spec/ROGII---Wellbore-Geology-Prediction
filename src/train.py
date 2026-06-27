@@ -14,6 +14,7 @@ from dataset import get_test_well_ids, list_well_ids, load_well
 from features import build_training_matrix, ensure_feature_columns
 from model import get_lightgbm_regressor, save_artifacts
 from predict import recursive_predict_well
+from joblib import Parallel, delayed
 
 
 def rmse(y_true, y_pred) -> float:
@@ -56,6 +57,16 @@ def build_matrix_for_wells(
     return x, y, group_values
 
 
+def recursive_predict_single_well(well_id: str, data_dir: str | Path, model, feature_columns: list[str]) -> pd.DataFrame:
+    well = load_well(data_dir, "train", well_id)
+    pred_df, _ = recursive_predict_well(model, feature_columns, well)
+    truth = well.horizontal[["row_index", "TVT"]].copy()
+    truth["id"] = truth["row_index"].map(lambda idx: f"{well_id}_{int(idx)}")
+    merged = pred_df.merge(truth[["id", "TVT"]], on="id", how="left")
+    merged["well_id"] = well_id
+    return merged
+
+
 def recursive_validate(
     model,
     feature_columns: list[str],
@@ -72,15 +83,10 @@ def recursive_validate(
             "by_well": {},
         }
     selected_ids = well_ids[:max_wells] if max_wells is not None else well_ids
-    rows: list[pd.DataFrame] = []
-    for well_id in tqdm(selected_ids, desc="Recursive validation"):
-        well = load_well(data_dir, "train", well_id)
-        pred_df, _ = recursive_predict_well(model, feature_columns, well)
-        truth = well.horizontal[["row_index", "TVT"]].copy()
-        truth["id"] = truth["row_index"].map(lambda idx: f"{well_id}_{int(idx)}")
-        merged = pred_df.merge(truth[["id", "TVT"]], on="id", how="left")
-        merged["well_id"] = well_id
-        rows.append(merged)
+    rows = Parallel(n_jobs=-2)(
+        delayed(recursive_predict_single_well)(well_id, data_dir, model, feature_columns)
+        for well_id in tqdm(selected_ids, desc="Recursive validation")
+    )
 
     if not rows:
         return {"recursive_rmse": None, "rows": 0, "by_well": {}}
