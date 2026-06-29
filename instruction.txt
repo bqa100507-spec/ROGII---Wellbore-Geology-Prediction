@@ -2,7 +2,7 @@ Bạn đang làm việc trong project Kaggle “ROGII - Wellbore Geology Predict
 
 Mục tiêu project:
 - Xây dựng pipeline dự đoán TVT bị khuyết trong test bằng Autoregressive LightGBM.
-- Dự báo theo kiểu Recursive Multi-step Forecasting: với mỗi row thiếu `TVT_input`, model dự đoán `TVT`, rồi ghi ngay prediction đó vào history để tính lag/rolling cho các row sau.
+- Dự báo theo kiểu Recursive Multi-step Forecasting: với mỗi row thiếu `TVT_input`, model dự đoán `delta_tvt` (sự thay đổi TVT), cộng dồn vào quá khứ, rồi ghi ngay prediction đó vào history để tính lag/rolling cho các row sau.
 - Tránh leakage: mặc định loại 3 test well IDs khỏi training: `000d7d20`, `00bbac68`, `00e12e8b`.
 
 Cấu trúc hiện tại:
@@ -11,7 +11,7 @@ Cấu trúc hiện tại:
   - `data/test/`: 3 wells, mỗi well có horizontal/typewell CSV.
   - `data/sample_submission.csv`: schema `id,tvt`, id dạng `<well_id>_<row_index>`.
 - `src/dataset.py`: đọc well pairs, parse `well_id`, giữ `row_index`, đọc sample submission.
-- `src/features.py`: tạo feature autoregressive.
+- `src/features.py`: tạo feature autoregressive, GR Lookahead, tính đạo hàm không gian, ghép Typewell.
 - `src/model.py`: LightGBM factory, save/load artifacts.
 - `src/train.py`: CLI train holdout/groupkfold.
 - `src/predict.py`: CLI recursive inference và tạo submission.
@@ -24,15 +24,16 @@ Ràng buộc dữ liệu quan trọng:
 - Test horizontal chỉ có:
   `MD,X,Y,Z,GR,TVT_input`
 - Vì vậy model submit KHÔNG được dùng `ANCC, ASTNU, ASTNL, EGFDU, EGFDL, BUDA`.
-- Typewell test chỉ có `TVT,GR`; không có `X,Y,Z`, nên không thể tính Euclidean distance 3D tới typewell. Thay bằng feature alignment theo TVT/GR:
-  `typewell_gr_at_nearest_tvt`, `gr_minus_typewell_gr`, `nearest_typewell_tvt_gap`, rolling stats của typewell GR quanh TVT gần nhất.
+- Typewell test chỉ có `TVT,GR`; không có `X,Y,Z`, nên không thể tính Euclidean distance 3D tới typewell. Thay bằng feature alignment theo TVT/GR.
 
 Feature engineering hiện có:
+- Trọng tâm hệ tọa độ: Sử dụng `Current_Drift = expected_tvt - start_tvt` để chống trôi dạt địa tầng. 
 - Base inputs: `MD`, `X`, `Y`, `Z`, `GR`.
 - History columns: `TVT`, `X`, `Y`, `Z`, `GR`.
-- Lags: `[1,2,3,5,10,20]`.
-- Rolling mean/std windows: `[5,10,20]`.
+- Lags & Deltas: `[1,2,3,5,10,20,50,100]`.
+- Rolling mean/std windows: `[5,10,20,50,100]`.
 - Spatial derivatives: `dX`, `dY`, `dZ`, `dMD`, `xy_step_distance`, `step_distance`, `path_distance`, `dZ_dMD`.
+- GR Lookahead & Lookback: Các đặc trưng vĩ mô `GR_lookahead_10`, `GR_lookahead_30`, `GR_static_mean_50`...
 - Tất cả TVT lag/rolling phải dùng quá khứ trước row hiện tại, tuyệt đối không dùng target hiện tại.
 
 Lệnh chính:
@@ -41,3 +42,4 @@ python src/train.py --data_dir data --exp_name lgbm_baseline --split holdout --v
 python src/train.py --data_dir data --exp_name lgbm_kfold --split groupkfold --n_splits 5
 python src/predict.py --data_dir data --model_dir model/lgbm_baseline --output data/submission.csv
 python -m pytest -q
+```
