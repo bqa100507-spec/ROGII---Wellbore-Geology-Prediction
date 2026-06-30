@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from pathlib import Path
@@ -612,3 +613,48 @@ def run_diagnostic_pack(
     summary_path.write_text(json.dumps(summary, indent=2, allow_nan=True), encoding="utf-8")
     write_experiment_report(summary, report_path)
     return summary
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Build baseline vs experiment diagnostic plot pack.")
+    parser.add_argument("--baseline", type=str, required=True, help="Baseline prediction CSV.")
+    parser.add_argument("--experiment", type=str, default=None, help="Experiment prediction CSV.")
+    parser.add_argument("--diagnostics", type=str, default=None, help="Optional experiment diagnostics CSV.")
+    parser.add_argument("--data_dir", type=str, default="data")
+    parser.add_argument("--output_dir", type=str, default="model/error_plots")
+    parser.add_argument("--report_path", type=str, default="model/experiment_report.md")
+    parser.add_argument("--top-k-wells", type=int, default=3)
+    parser.add_argument("--selected-wells", type=str, default="", help="Comma-separated wells for plot examples.")
+    parser.add_argument("--no-load-well", action="store_true", help="Skip loading well context for GR alignment plots.")
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    selected_wells = [item.strip() for item in args.selected_wells.split(",") if item.strip()] or None
+    load_well_fn = None
+    if not args.no_load_well:
+        from dataset import load_well
+
+        load_well_fn = load_well
+    summary = run_diagnostic_pack(
+        baseline_path=args.baseline,
+        experiment_path=args.experiment,
+        diagnostics_path=args.diagnostics,
+        data_dir=args.data_dir,
+        output_dir=args.output_dir,
+        report_path=args.report_path,
+        top_k_wells=args.top_k_wells,
+        selected_wells=selected_wells,
+        load_well_fn=load_well_fn,
+    )
+    print(f"Saved diagnostic plots to {summary['output_dir']}")
+    print(f"Saved experiment report to {summary['report_path']}")
+    print(
+        "RMSE baseline -> experiment: "
+        f"{summary['overall_rmse_baseline']:.4f} -> {summary['overall_rmse_experiment']:.4f}"
+    )
+
+
+if __name__ == "__main__":
+    main()
