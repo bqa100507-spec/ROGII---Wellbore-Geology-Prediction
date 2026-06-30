@@ -22,6 +22,12 @@ from features import (
 )
 from model import load_artifacts
 
+
+def predict_delta(model, features_array: np.ndarray) -> float:
+    predictor = getattr(model, "booster_", model)
+    return float(predictor.predict(features_array)[0])
+
+
 def get_start_coords(horizontal: pd.DataFrame) -> tuple[float, float]:
     valid_xy = horizontal.dropna(subset=["X", "Y"])
     if len(valid_xy) == 0:
@@ -96,7 +102,7 @@ def recursive_predict_well(model, feature_columns: list[str], well, train_wells=
         regional_dip = regional_dip_array[idx]
         
         features_array = builder.build_row(tvt_work, idx)
-        predicted_delta = float(model.booster_.predict(features_array)[0])
+        predicted_delta = predict_delta(model, features_array)
         
         if np.isfinite(regional_dip):
             clipped_delta = float(np.clip(predicted_delta, regional_dip - 0.15, regional_dip + 0.15))
