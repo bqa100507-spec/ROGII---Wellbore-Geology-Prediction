@@ -8,6 +8,7 @@ data/test/
 data/sample_submission.csv
 data/*.zip
 data/submission*.csv
+data/validation_predictions.csv
 model/*/
 !model/.gitkeep
 
